@@ -1,0 +1,13 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: unittests
+spec:
+  template:
+    spec:
+      containers:
+        - name: unittests
+          image: npm
+          command: ["npm", "run", "unittests"]
+      restartPolicy: Never
+  backoffLimit: 4

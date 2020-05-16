@@ -5,9 +5,9 @@
   "main": "helloworld.js",
   "scripts": {
     "test": "mocha tests/unit/*.js && mocha tests/integration/*.js && testcafe \"chrome:headless\" tests/ui/helloworld.ts",
-    "unittests": "MOCHA_FILE=./TEST-unittests.xml PROPERTIES=testsuiteTitle:UnitTests mocha --reporter mocha-junit-reporter tests/unit/*.js",
-    "uitests": "testcafe \"chrome:headless\" tests/ui/helloworld.ts --reporter xunit:./TEST-uitests.xml",
-    "integrationtests": "MOCHA_FILE=./TEST-integrationtests.xml PROPERTIES=testsuiteTitle:IntegrationTests mocha --reporter mocha-junit-reporter tests/integration/*.js"
+    "unittests": "MOCHA_FILE=./tests/results/TEST-unittests.xml PROPERTIES=testsuiteTitle:UnitTests mocha --reporter mocha-junit-reporter tests/unit/*.js",
+    "uitests": "testcafe \"chrome:headless\" tests/ui/helloworld.ts --reporter xunit:./tests/results/TEST-uitests.xml",
+    "integrationtests": "MOCHA_FILE=./tests/results/TEST-integrationtests.xml PROPERTIES=testsuiteTitle:IntegrationTests mocha --reporter mocha-junit-reporter tests/integration/*.js"
   },
   "author": "David Mitchell",
   "license": "ISC",
