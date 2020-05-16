@@ -1,0 +1,14 @@
+config:
+  target: 'http://localhost:8080'
+  phases:
+    - duration: 200
+      arrivalRate: 50
+  ensure:
+    p95: 10
+    maxErrorRate: 1
+scenarios:
+  - flow:
+    - get:
+        url: "/about"
+    - get:
+        url: "/version"

@@ -1,0 +1,221 @@
+# Node.js
+# Build a general Node.js project with npm.
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+
+pool:
+  vmImage: 'Ubuntu 16.04'
+
+steps:
+- task: NodeTool@0
+  inputs:
+    versionSpec: '8.x'
+  displayName: 'Install Node.js'
+
+- script: |
+    # Install the app and all its dependencies
+    npm install
+  displayName: 'npm install and build'
+  
+- script: |
+    # First gather lines-of-coverage data from the test cases
+    # node_modules/nyc/bin/nyc.js --reporter=lcov --reporter=text-lcov npm test
+
+    # Download sonar-scanner
+    SONARCLOUDDIR=/tmp
+    wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-3.2.0.1227-linux.zip -O $SONARCLOUDDIR/sonar.zip
+    unzip $SONARCLOUDDIR/sonar.zip -d /tmp
+
+    # Print out some diagnostic info
+    ls -al $SONARCLOUDDIR
+    cat $SONARCLOUDDIR/sonar-scanner-3.2.0.1227-linux/conf/sonar-scanner.properties
+    PATH=$SONARCLOUDDIR/sonar-scanner-3.2.0.1227-linux/bin:$PATH
+    echo $PATH
+    APP_DIR=$(pwd)
+    ls -al
+    sonar-scanner -h
+
+    # Run sonar-scanner
+    sonar-scanner \
+    -Dsonar.projectKey=monch1962_hello-world-devops \
+    -Dsonar.organization=monch1962-github \
+    -Dsonar.sources=. \
+    -Dsonar.exclusions=node_modules/**,tests/**,coverage/** \
+    -Dsonar.host.url=https://sonarcloud.io \
+    -Dsonar.javascript.lcov.reportPaths=app/coverage/** \
+    -Dsonar.login=8725538bd2603c6990da57d9c53afe2d176fb844
+  displayName: 'Run sonarcloud code quality tests'
+    
+- script: |
+    npm run unittests
+  displayName: 'Run unit tests'
+
+- script: |
+    # Install the testcafe framework; we're going to use it for UI testing
+    npm install -g testcafe
+
+    # Install Testcafe's XUnit reporting module
+    npm install -g testcafe-reporter-xunit
+
+    # Install GUID library
+    # npm install --save-dev guid-typescript
+
+    # Start the app running, and save the PID
+    node helloworld.js &
+    APP_PID=$!
+
+    # Run all available UI tests on multiple browsers, and save results in XUnit format
+    testcafe "chrome:headless,firefox:headless,chrome:headless:emulation:device=iphone X,chrome:headless:emulation:device=Galaxy S5,chrome:headless:emulation:device=Pixel 2,chrome:headless:emulation:device=iPad" tests/ui/** --reporter xunit --screenshots . > TEST-uitests.xml
+
+    cat TEST-uitests.xml
+
+    # Kill the app
+    kill $APP_PID
+  displayName: 'Run UI tests'
+
+- script: |
+    # Start the app running and save the PID
+    node helloworld.js &
+    APP_PID=$!
+
+    # Grab a copy of wilee (you'd probably want to get it from somewhere like Artefactory or Nexus...)
+    wget https://www.dropbox.com/s/sthv0p77c5gip2g/wilee?dl=0 -O wilee
+    chmod +x wilee
+    ls -l wilee
+
+    # Run all API tests in test/api/*.wilee.json
+    APP=http://localhost:8080 TESTCASES=tests/api/*.wilee.json ./wilee
+
+    # If wilee fails with errors, kill the app instance and exit 1 so Devops can see the failure
+    if [ $? -ne 0 ]; then kill $APP_PID && exit 1; fi
+
+    # Don't need the app any more; kill it
+    kill $APP_PID
+
+    # Let's display the summary of the integration test results
+    TESTRESULTS=$(cat tests/api/*.result.json)
+    echo $TESTRESULTS | jq '.'
+    echo $TESTRESULTS | jq 'del(.request, .expect, .actual)'
+
+    # If there's any failed test cases, then exit 1 so Devops can see the failure
+    FAILED_TESTS=$(echo $TESTRESULTS | jq '.pass_fail' | grep fail | wc -l)
+    if [ $FAILED_TESTS -gt 0 ]; then echo $FAILED_TESTS "API tests failed" && exit 1; fi
+  displayName: 'Run wilee API tests'
+
+- script: |
+    # Now start the app running, and capture the PID so we can kill it later
+    # Note that we're setting HTTP_PROXY to point to the Hoverfly stub, which we'll start next
+    HTTP_PROXY=http://localhost:8500 node helloworld.js &
+    APP_PID=$!
+
+    # Get the hoverfly stub engine
+    wget https://github.com/SpectoLabs/hoverfly/releases/download/v0.17.7/hoverfly_bundle_linux_amd64.zip -O hoverfly.zip
+    unzip hoverfly.zip
+
+    # Start hoverfly running, and read in the stub config. In this case we're going to stub out 
+    # the (fictional) trumpwall.com site
+    ./hoverctl start
+    ./hoverctl import tests/integration/stub-definitions/trumpwall.com.stub.json
+
+    # Run the stubbed integration tests, which try to hit http://trumpwall.com via the /trumpwall endpoint
+    # If any tests fail, exit 1 to fail this step in the pipeline
+    npm run integrationtests
+    if [ $? -ne 0 ]; then kill $APP_PID && ./hoverctl stop && exit 1; fi
+
+    # Stop Hoverfly
+    ./hoverctl stop
+
+    # Kill the app
+    kill $APP_PID
+  displayName: 'Run integration tests (against stubbed backend)'
+
+- script: |
+    # Start the app running, and capture the PID so we can kill it later
+    node helloworld.js &
+    APP_PID=$!
+
+    # Install the Axe CLI accessibility testing tool
+    npm install -g axe-cli
+    axe --help
+
+    # Run the Axe accessibility tests (if there's more pages to test, just give it a comma-separated list of URLs)
+    # Appending --exit will cause the tests to exit 1 if problems are found. This could be handy but I'm not using it yet
+    axe http://localhost:8080 --exit
+
+    # Kill the app
+    kill $APP_PID
+  displayName: 'Run Axe accessibility tests'
+  
+- script: |
+    # This isn't a real application that we're testing, so let's test a 'real' app as part of the pipeline
+    # WEBSITE=https://www.microsoft.com
+
+    # Grab a copy of htrace.sh
+    # git clone https://github.com/trimstray/htrace.sh.git
+
+    # Build a htrace.sh Docker container
+    # cd htrace.sh/build
+    # docker build --rm -t htrace.sh -f Dockerfile .
+
+    # Run htrace.sh tests against the nominated web site
+    # docker run --rm -t --name htrace.sh htrace.sh -d $WEBSITE -s -h
+  displayName: 'Run http/https security checks'
+
+- script: |
+    # Start the app running, and capture the PID so we can kill it later
+    node helloworld.js &
+    APP_PID=$!
+
+    # Install the artillery load testing tool
+    npm install -g artillery
+    artillery -V
+
+    # Run the artillery load test
+    #artillery run -o TEST-artillery.json test/performance/performance.yml
+    artillery run tests/performance/performance.yml
+
+    # If test fails, exit 1 to fail this step in the pipeline
+    if [ $? -ne 0 ]; then kill $APP_PID && exit 1; fi
+
+    # Generate the Artillery test report
+    #artillery report TEST-artillery.json
+
+    #ls -l
+
+    # Display Artillery test results in log
+    #cat TEST-artillery.json
+    
+    # Kill the app
+    kill $APP_PID
+  displayName: 'Run Artillery performance test'
+
+# Publish Test Results
+# Publish Test Results to Azure Pipelines/TFS
+- task: PublishTestResults@2
+  inputs:
+    testResultsFormat: 'JUnit' # Options: JUnit, NUnit, VSTest, xUnit
+    testResultsFiles: '**/TEST-*.xml' 
+    #searchFolder: '$(System.DefaultWorkingDirectory)' # Optional
+    #mergeTestResults: false # Optional
+    #testRunTitle: 'Integration' # Optional
+    #buildPlatform: # Optional
+    #buildConfiguration: # Optional
+    #publishRunAttachments: true # Optional
+
+# Copy Files
+# Copy files from source folder to target folder using match patterns (The match patterns will only match file paths, not folder paths)
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: $(Build.SourcesDirectory)
+    contents: |
+      2*/**/*.png
+      !2*/**/thumbnails/*.png
+    targetFolder: $(Build.ArtifactStagingDirectory)
+    #cleanTargetFolder: false # Optional
+    #overWrite: false # Optional
+    #flattenFolders: false # Optional
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    pathtoPublish: '$(Build.ArtifactStagingDirectory)'
+    artifactName: UI-test-screenshots
